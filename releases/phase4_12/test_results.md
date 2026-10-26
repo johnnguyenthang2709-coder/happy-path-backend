@@ -1,5 +1,7 @@
 # Release validation
 
+These are the original release-round results. See [PR #2 review-fix validation](review_fixes_validation.md) for the separately executed fix-round results and current test locations.
+
 Executed during this release round, 2026-10-26. No production database was used.
 
 | Run | Actual result |

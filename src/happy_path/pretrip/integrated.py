@@ -9,6 +9,8 @@ from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from happy_path.core.road_sources import now
+
 import numpy as np
 from shapely import from_wkb, reverse
 from shapely.geometry import LineString, Point, shape
@@ -56,7 +58,68 @@ def database(out):
     db.executescript(
         Path(__file__).with_name("integrated_schema.sql").read_text("utf8")
     )
+    current_views(db)
     return db
+
+
+def current_views(db, include_inferred=False, include_unresolved=False):
+    """Connection-local current views work on old releases without modifying them.
+
+    Discovery flags widen only geographic status. Validity and dependency masks
+    apply unconditionally, including to claims, road context and access links.
+    """
+    inferred, unresolved = int(bool(include_inferred)), int(bool(include_unresolved))
+    db.executescript(f"""
+    CREATE TEMP VIEW effective_entities AS
+      SELECT e.* FROM main.entities e WHERE ({inferred} OR e.inferred=0)
+      AND ({unresolved} OR e.unresolved=0) AND e.kind!='original_audit_reference'
+      AND NOT EXISTS(SELECT 1 FROM main.invalidations i WHERE i.output_id=e.entity_id);
+    CREATE TEMP VIEW effective_routes AS
+      SELECT r.* FROM main.routes r WHERE ({inferred} OR r.inferred=0)
+      AND r.role!='original_audit_reference'
+      AND NOT EXISTS(SELECT 1 FROM main.invalidations i WHERE i.output_id=r.route_id);
+    CREATE TEMP VIEW effective_relationships AS
+      SELECT s.* FROM main.relationships s JOIN effective_entities e USING(entity_id)
+      WHERE ({inferred} OR s.inferred=0) AND ({unresolved} OR s.unresolved=0)
+      AND s.invalidated=0 AND s.route_id!='{AUDIT_ID}'
+      AND NOT EXISTS(SELECT 1 FROM main.invalidations i WHERE i.output_id IN (s.relationship_id,s.route_id))
+      AND (NOT EXISTS(SELECT 1 FROM main.routes r WHERE r.route_id=s.route_id)
+        OR EXISTS(SELECT 1 FROM effective_routes r WHERE r.route_id=s.route_id))
+      AND (NOT EXISTS(SELECT 1 FROM main.entities e WHERE e.entity_id=s.route_id)
+        OR EXISTS(SELECT 1 FROM effective_entities e WHERE e.entity_id=s.route_id));
+    CREATE TEMP VIEW effective_claims AS
+      SELECT c.* FROM main.claims c JOIN main.sources s USING(source_id)
+      JOIN effective_entities e USING(entity_id) WHERE c.usable=1 AND s.is_public=1
+      AND NOT EXISTS(SELECT 1 FROM main.invalidations i WHERE i.output_id IN (c.claim_id,c.canonical_id,c.source_id));
+    CREATE TEMP VIEW effective_claim_links AS
+      SELECT l.* FROM main.claim_links l JOIN effective_claims c USING(claim_id)
+      JOIN effective_routes r USING(route_id) WHERE l.usable=1
+      AND NOT EXISTS(SELECT 1 FROM main.invalidations i WHERE i.output_id=l.link_id)
+      AND (json_extract(l.payload,'$.detail.place_link_id') IS NULL OR EXISTS(
+        SELECT 1 FROM effective_place_links p WHERE p.link_id=json_extract(l.payload,'$.detail.place_link_id')))
+      AND (l.application NOT IN ('general_corridor_context','historical_bounded_section_context') OR EXISTS(
+        SELECT 1 FROM effective_road_links b WHERE b.route_id=l.route_id AND b.entity_id=c.entity_id));
+    CREATE TEMP VIEW effective_place_links AS
+      SELECT l.* FROM main.place_links l JOIN effective_entities e USING(entity_id)
+      JOIN effective_routes r USING(route_id)
+      WHERE ({inferred} OR l.inferred=0) AND ({unresolved} OR l.unresolved=0)
+      AND NOT EXISTS(SELECT 1 FROM main.invalidations i WHERE i.output_id=l.link_id)
+      AND (l.relationship_id IS NULL OR EXISTS(
+        SELECT 1 FROM effective_relationships s WHERE s.relationship_id=l.relationship_id
+        AND s.entity_id=l.entity_id AND s.route_id=l.route_id));
+    CREATE TEMP VIEW effective_road_links AS
+      SELECT l.* FROM main.road_links l JOIN effective_entities e USING(entity_id)
+      JOIN effective_routes r USING(route_id) WHERE ({inferred} OR l.inferred=0)
+      AND NOT EXISTS(SELECT 1 FROM main.invalidations i WHERE i.output_id IN (l.link_id,l.source_route_id));
+    """)
+
+
+def validity_fingerprint(db):
+    return digest(
+        list(
+            db.execute("SELECT output_id,reason FROM invalidations ORDER BY output_id")
+        )
+    )
 
 
 def union_intervals(intervals):
@@ -353,7 +416,243 @@ def insert_routes(db, source, raster_directory):
     db.commit()
 
 
-def score_routes(db, raster_directory, root, online, *, osm_path=None):
+def cell_missing_inputs(cell, line):
+    if cell.get("supported_tunnel_excluded"):
+        return False
+    midpoint = (cell["start_m"] + cell["end_m"]) / 2
+    if (
+        line.interpolate(max(0, midpoint - 2)).distance(
+            line.interpolate(min(line.length, midpoint + 2))
+        )
+        < 1e-9
+    ):
+        return False  # Terminal tangent degeneracy, not an unavailable download.
+    return (
+        cell.get("roadside_sample_coverage", 0) < 1
+        or cell.get("dsm_ruggedness_rms_m") is None
+    )
+
+
+def cell_retryable(cell, line, store):
+    if not cell_missing_inputs(cell, line):
+        return False
+    missing = [s for s in cell.get("roadside_samples", []) if s.get("class") is None]
+    if missing:
+        coords = [[s["longitude"], s["latitude"]] for s in missing]
+        values, _, _, _ = store.sample("worldcover", coords, acquire=False)
+        if (
+            np.isfinite(values).any()
+            or not store.native_coverage("worldcover", coords).all()
+        ):
+            return True
+    if cell.get("dsm_ruggedness_rms_m") is None:
+        center = [[cell["midpoint_longitude"], cell["midpoint_latitude"]]]
+        if np.isfinite(store.terrain(center, acquire=False)[1][0]):
+            return True
+        values, xy, res, _ = store.sample("dem", center, acquire=False)
+        if not np.isfinite(values[0]):
+            return not store.native_coverage("dem", center).all()
+        neighbors = xy[0] + res[0] * np.array(
+            [(dx, dy) for dy in [-1, 0, 1] for dx in [-1, 0, 1]]
+        )
+        return not store.native_coverage("dem", neighbors).all()
+    return False  # Covered native NoData / conflicting pixels stay unknown.
+
+
+def merge_retry_cell(old, new):
+    for key in [
+        "geometry_id",
+        "cell_index",
+        "start_m",
+        "end_m",
+        "extraction_version",
+        "midpoint_longitude",
+        "midpoint_latitude",
+        "supported_tunnel_excluded",
+    ]:
+        if old.get(key) != new.get(key):
+            raise ValueError(
+                "Retry changed geometry, sampling version/location or exclusion mask"
+            )
+    merged = dict(old)
+    samples = []
+    for a, b in zip(old["roadside_samples"], new["roadside_samples"], strict=True):
+        if (a["longitude"], a["latitude"], a["offset_left_m"]) != (
+            b["longitude"],
+            b["latitude"],
+            b["offset_left_m"],
+        ):
+            raise ValueError("Retry changed roadside sample support")
+        if (
+            a["class"] is not None
+            and b["class"] is not None
+            and a["class"] != b["class"]
+        ):
+            raise ValueError("Conflicting native evidence; prior checkpoint preserved")
+        samples.append(b if a["class"] is None and b["class"] is not None else a)
+    valid = [s for s in samples if s["class"] is not None]
+    merged.update(
+        roadside_samples=samples,
+        roadside_valid_samples=len(valid),
+        roadside_sample_coverage=len(valid) / 6,
+    )
+    fractions = {}
+    for name, code in [("tree", 10), ("water", 80), ("cropland", 40)]:
+        fractions[name] = (
+            sum(s["class"] == code for s in valid) / len(valid) if valid else None
+        )
+        merged["roadside_" + name + "_fraction"] = fractions[name]
+    merged["raw_sampled_fractions"] = fractions
+    if (
+        old.get("dsm_ruggedness_rms_m") is None
+        and new.get("dsm_ruggedness_rms_m") is not None
+    ):
+        for key in [
+            "dsm_elevation_m",
+            "dsm_ruggedness_rms_m",
+            "raw_dsm_ruggedness_rms_m",
+            "dsm_3x3_valid_samples",
+            "dsm_center_ref",
+            "dsm_neighbor_refs",
+        ]:
+            merged[key] = new[key]
+    return merged
+
+
+def cells_score(cells, policy):
+    score = scenic_score(cells, policy)
+    score["supported_tunnel_excluded_m"] = sum(
+        c["cell_length_m"] for c in cells if c["supported_tunnel_excluded"]
+    )
+    score["uncertain_surface_context_m"] = sum(
+        c["cell_length_m"]
+        for c in cells
+        if c["surface_context_status"]
+        == "tunnel_tagged_candidate_unresolved_attribution"
+    )
+    score["component_contributions"] = contributions(score, policy)
+    return score
+
+
+def record_raster_assets(db, store):
+    # Ownership governs cache eviction, not evidence retention. Register inherited
+    # and newly acquired pixel receipts in the same transaction as their score.
+    registered = {row[0] for row in db.execute("SELECT asset_id FROM raster_assets")}
+    for asset in store.assets:
+        if asset["key"] in registered:
+            continue
+        db.execute(
+            "INSERT OR REPLACE INTO raster_assets VALUES (?,?)",
+            (
+                asset["key"],
+                encode(
+                    {**asset["receipt"], "native_transform": list(asset["transform"])}
+                ),
+            ),
+        )
+        registered.add(asset["key"])
+
+
+def retry_geometry(db, gid, line, geo, rev, store, matcher, policy, existing):
+    rows = {
+        r[0]: json.loads(r[1])
+        for r in db.execute(
+            "SELECT cell_index,payload FROM cells WHERE geometry_id=? ORDER BY cell_index",
+            (gid,),
+        )
+    }
+    selected = [i for i, c in rows.items() if cell_retryable(c, line, store)]
+    if not selected:
+        return "terminal_or_complete"
+    before = {i: rows[i] for i in selected}
+    failure_start = len(store.failures)
+    try:
+        for _, group in itertools.groupby(
+            enumerate(selected), lambda pair: pair[1] - pair[0]
+        ):
+            indices = [i for _, i in group]
+            for start in range(indices[0], indices[-1] + 1, 1000):
+                cells = compute_cells(
+                    gid,
+                    line,
+                    32648,
+                    store,
+                    start,
+                    max_cells=min(1000, indices[-1] + 1 - start),
+                    matcher=matcher,
+                    travel_reversed=rev,
+                )
+                for cell in cells:
+                    rows[cell["cell_index"]] = merge_retry_cell(
+                        rows[cell["cell_index"]], cell
+                    )
+        improved = any(encode(rows[i]) != encode(before[i]) for i in selected)
+        score = cells_score(list(rows.values()), policy)
+        db.execute("SAVEPOINT retry_geometry")
+        if improved:
+            record_raster_assets(db, store)
+            db.executemany(
+                "UPDATE cells SET payload=? WHERE geometry_id=? AND cell_index=?",
+                [(encode(rows[i]), gid, i) for i in selected],
+            )
+            provenance = json.loads(existing[2])
+            provenance.update(
+                method="integrated_derivative_native_retry_same_policy",
+                retry_recomputed_cells=len(selected),
+                prior_method=provenance.get("method"),
+            )
+            db.execute(
+                "UPDATE scores SET payload=?,provenance=? WHERE geometry_id=?",
+                (encode(score), encode(provenance), gid),
+            )
+            # A crash after this commit must not expose pre-retry comparisons.
+            db.execute(
+                "DELETE FROM comparisons WHERE case_id IN (SELECT case_id FROM routes WHERE geometry_id=?)",
+                (gid,),
+            )
+        db.execute(
+            "INSERT INTO score_retry_history(geometry_id,successful,payload) VALUES (?,?,?)",
+            (
+                gid,
+                int(improved),
+                encode(
+                    {
+                        "attempted_at": now(),
+                        "previous_score": json.loads(existing[1]),
+                        "previous_cells": list(before.values()),
+                        "requested_cells": selected,
+                        "failures": store.failures[failure_start:],
+                    }
+                ),
+            ),
+        )
+        db.execute("RELEASE retry_geometry")
+        db.commit()
+        return "improved" if improved else "unchanged"
+    except Exception as error:
+        db.rollback()
+        db.execute(
+            "INSERT INTO score_retry_history(geometry_id,successful,payload) VALUES (?,?,?)",
+            (
+                gid,
+                0,
+                encode(
+                    {
+                        "attempted_at": now(),
+                        "reason": str(error),
+                        "requested_cells": selected,
+                        "previous_checkpoint_preserved": True,
+                    }
+                ),
+            ),
+        )
+        db.commit()
+        return "failed_checkpoint_preserved"
+
+
+def score_routes(
+    db, raster_directory, root, online, *, osm_path=None, retry_missing=False
+):
     raster = readonly(raster_directory / "scenic.sqlite")
     policy = read(raster_directory / "config.json")["scoring"]
     roots = [raster_directory / "raster_cache"]
@@ -364,10 +663,18 @@ def score_routes(db, raster_directory, root, online, *, osm_path=None):
     new = 0
     reused = 0
     failures = []
+    retry_results = defaultdict(int)
     for gid, wkb, role in db.execute(
         "SELECT geometry_id,min(geometry_wkb),min(role) FROM routes WHERE role!='original_audit_reference' GROUP BY geometry_id"
     ).fetchall():
-        if db.execute("SELECT 1 FROM scores WHERE geometry_id=?", (gid,)).fetchone():
+        existing = db.execute(
+            "SELECT version,payload,provenance FROM scores WHERE geometry_id=?", (gid,)
+        ).fetchone()
+        if existing and existing[0] != EXTRACTION_VERSION:
+            raise ValueError(
+                "Extraction version changed; create a new derivative output"
+            )
+        if existing and not retry_missing:
             continue
         original = raster.execute(
             "SELECT geometry,crs,length_m,score_json FROM jobs WHERE geometry_id=?",
@@ -376,6 +683,38 @@ def score_routes(db, raster_directory, root, online, *, osm_path=None):
         forward_geometry = from_wkb(wkb)
         _, geo, rev = canonical(forward_geometry, 32648)
         line = transform(projection(32648).transform, geo)
+        if existing:
+            pending = [
+                json.loads(r[0])
+                for r in db.execute(
+                    "SELECT payload FROM cells WHERE geometry_id=?", (gid,)
+                )
+            ]
+            if not any(cell_missing_inputs(c, line) for c in pending):
+                retry_results["complete_or_intentionally_excluded"] += 1
+                continue
+            if store is None:
+                store = RasterStore(
+                    Path(db.execute("PRAGMA database_list").fetchone()[2]).parent
+                    / "raster_cache",
+                    roots,
+                    online=online,
+                )
+            matcher = (
+                route_matcher(root, geo, 32648, source_path=osm_path)
+                if osm_path and osm_path.exists()
+                else None
+            )
+            if matcher is None:
+                raise ValueError(
+                    "Retry requires the declared OSM snapshot for tunnel masking"
+                )
+            retry_results[
+                retry_geometry(
+                    db, gid, line, geo, rev, store, matcher, policy, existing
+                )
+            ] += 1
+            continue
         if (
             original
             and original[3]
@@ -484,6 +823,8 @@ def score_routes(db, raster_directory, root, online, *, osm_path=None):
             if original and method.startswith("identical")
             else VERSION,
         }
+        if store:
+            record_raster_assets(db, store)
         db.execute(
             "INSERT OR REPLACE INTO scores VALUES (?,?,?,?)",
             (gid, EXTRACTION_VERSION, encode(score), encode(coverage)),
@@ -500,17 +841,7 @@ def score_routes(db, raster_directory, root, online, *, osm_path=None):
         db.execute("INSERT OR IGNORE INTO raster_assets VALUES (?,?)", (aid, payload))
     if store:
         failures = store.failures
-        for a in store.assets:
-            if a["owned"]:
-                db.execute(
-                    "INSERT OR REPLACE INTO raster_assets VALUES (?,?)",
-                    (
-                        a["key"],
-                        encode(
-                            {**a["receipt"], "native_transform": list(a["transform"])}
-                        ),
-                    ),
-                )
+        record_raster_assets(db, store)
         metrics = {
             "acquisition_s": store.acquisition_s,
             "acquired_cache_bytes": store.acquired_bytes,
@@ -525,6 +856,7 @@ def score_routes(db, raster_directory, root, online, *, osm_path=None):
     return {
         "exact_geometry_reuses_this_run": reused,
         "new_native_extractions_this_run": new,
+        "retry_results_this_run": dict(retry_results),
         **metrics,
     }
 
@@ -891,10 +1223,12 @@ class IntegratedBaseline:
         if not self.enabled:
             return {"status": "disabled", "records": []}
         with readonly(self.directory / "integrated.sqlite") as db:
+            current_views(db, include_inferred, include_unresolved)
             if operation == "inventory":
                 return {
                     "status": "ok",
                     "version": VERSION,
+                    "counts_scope": "all_retained_records_including_history_not_current_eligibility",
                     "counts": {
                         t: db.execute("SELECT count(*) FROM " + t).fetchone()[0]
                         for t in [
@@ -910,7 +1244,7 @@ class IntegratedBaseline:
                 }
             if operation == "entity":
                 row = db.execute(
-                    "SELECT payload,inferred,unresolved FROM entities WHERE entity_id=?",
+                    "SELECT payload,inferred,unresolved FROM effective_entities WHERE entity_id=?",
                     (entity_id,),
                 ).fetchone()
                 if (
@@ -938,11 +1272,7 @@ class IntegratedBaseline:
                     ],
                 }
             if operation == "search":
-                table = (
-                    "entities"
-                    if include_inferred or include_unresolved
-                    else "effective_entities"
-                )
+                table = "effective_entities"
                 clauses = ["search_text LIKE ?"]
                 params = [
                     "%" + fold(text).replace("%", "\\%").replace("_", "\\_") + "%"
@@ -969,6 +1299,54 @@ class IntegratedBaseline:
                 r = db.execute(
                     "SELECT payload FROM comparisons WHERE case_id=?", (case_id,)
                 ).fetchone()
+                if r:
+                    comparison = json.loads(r[0])
+                    snapshot = db.execute(
+                        "SELECT value FROM metadata WHERE key='comparison_validity_fingerprint'"
+                    ).fetchone()
+                    stale = bool(snapshot and snapshot[0] != validity_fingerprint(db))
+                    for candidate in comparison.get("routes", []):
+                        if not db.execute(
+                            "SELECT 1 FROM effective_routes WHERE route_id=?",
+                            (candidate["route_id"],),
+                        ).fetchone():
+                            stale = True
+                        iconic = candidate.get("iconic", {})
+                        cached_ids = set(
+                            iconic.get("documented_road_entities", [])
+                            + iconic.get("nearby_only_entities", [])
+                        )
+                        live_ids = {
+                            row[0]
+                            for row in db.execute(
+                                "SELECT c.entity_id FROM effective_claim_links l JOIN claims c USING(claim_id) WHERE l.route_id=? AND json_extract(c.payload,'$.claim_kind') IN ('national_historic_site_designation','documented_1826_construction')",
+                                (candidate["route_id"],),
+                            )
+                        }
+                        if not cached_ids <= live_ids:
+                            stale = True
+                    for pair in comparison.get("comparisons", []):
+                        for key, rid in [
+                            ("candidate_specific_places_a", pair["route_a"]),
+                            ("candidate_specific_places_b", pair["route_b"]),
+                            ("shared_places", pair["route_a"]),
+                            ("shared_places", pair["route_b"]),
+                        ]:
+                            current = {
+                                p[0]
+                                for p in db.execute(
+                                    "SELECT entity_id FROM effective_place_links WHERE route_id=?",
+                                    (rid,),
+                                )
+                            }
+                            if not set(pair.get(key, [])) <= current:
+                                stale = True
+                    if stale:
+                        return {
+                            "status": "stale_comparison",
+                            "comparison": None,
+                            "reason": "Current validity/status filters changed comparison dependencies; rebuild a derivative before using cached rankings or place opportunities",
+                        }
                 return {
                     "status": "ok" if r else "not_found",
                     "comparison": json.loads(r[0]) if r else None,
@@ -976,6 +1354,7 @@ class IntegratedBaseline:
             if operation == "gaps":
                 return {
                     "status": "ok",
+                    "scope": "unresolved_history_queue_not_current_usable_records",
                     "records": [
                         json.loads(r[0])
                         for r in db.execute(
@@ -985,7 +1364,7 @@ class IntegratedBaseline:
                 }
             if operation not in ["route", "places", "evidence", "coverage"]:
                 raise ValueError("Unsupported opt-in operation")
-            table = "routes" if include_inferred else "effective_routes"
+            table = "effective_routes"
             row = db.execute(
                 "SELECT payload,geometry_id FROM "
                 + table
@@ -1004,7 +1383,7 @@ class IntegratedBaseline:
                 "raster_provenance": json.loads(score[1]) if score else None,
             }
             if operation in ["route", "places"]:
-                pt = "place_links" if include_inferred else "effective_place_links"
+                pt = "effective_place_links"
                 result["places"] = [
                     json.loads(r[0])
                     for r in db.execute(
@@ -1029,7 +1408,7 @@ class IntegratedBaseline:
                 result["road_context"] = [
                     json.loads(r[0])
                     for r in db.execute(
-                        "SELECT payload FROM road_links WHERE route_id=? AND (? OR inferred=0) ORDER BY link_id",
+                        "SELECT payload FROM effective_road_links WHERE route_id=? AND (? OR inferred=0) ORDER BY link_id",
                         (route_id, int(include_inferred)),
                     )
                 ]
@@ -1040,7 +1419,7 @@ class IntegratedBaseline:
                             "application": "unlocated_source_description_not_a_route_section_fact",
                         }
                         for (p,) in db.execute(
-                            "SELECT c.payload FROM claims c WHERE c.scope='localized_claim_extent_pending' AND c.entity_id IN (SELECT entity_id FROM road_links WHERE route_id=?)",
+                            "SELECT c.payload FROM effective_claims c WHERE c.scope='localized_claim_extent_pending' AND c.entity_id IN (SELECT entity_id FROM effective_road_links WHERE route_id=?)",
                             (route_id,),
                         )
                     ]
@@ -1153,6 +1532,10 @@ def compare_routes(db, policy):
                 ),
             ),
         )
+    db.execute(
+        "INSERT OR REPLACE INTO metadata VALUES (?,?)",
+        ("comparison_validity_fingerprint", validity_fingerprint(db)),
+    )
     db.commit()
 
 
@@ -1211,7 +1594,7 @@ def split_landscape(db, rid, line, shared, policy):
     }
 
 
-def build(root, out, phase, raster, *, online=False, osm=None):
+def build(root, out, phase, raster, *, online=False, osm=None, retry_missing=False):
     root, out, phase, raster = (Path(p).resolve() for p in [root, out, phase, raster])
     if (
         out == phase
@@ -1261,7 +1644,9 @@ def build(root, out, phase, raster, *, online=False, osm=None):
     db.commit()
     insert_sources(db, source)
     insert_routes(db, source, raster)
-    acquisition = score_routes(db, raster, root, online, osm_path=osm)
+    acquisition = score_routes(
+        db, raster, root, online, osm_path=osm, retry_missing=retry_missing
+    )
     history = db.execute(
         "SELECT value FROM metadata WHERE key='acquisition_runs'"
     ).fetchone()

@@ -294,7 +294,7 @@ def test_length_weighting_unknown_bounds_and_historical_policy_compatibility(tmp
 
 
 def test_protected_originals_unchanged():
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     path = (
         root / "exports/route_intelligence/raster_scenic_nationwide/input_manifest.json"
     )

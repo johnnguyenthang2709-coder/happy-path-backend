@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS routes(route_id TEXT PRIMARY KEY,role TEXT,case_id TE
 CREATE INDEX IF NOT EXISTS route_geometry ON routes(geometry_id);
 CREATE TABLE IF NOT EXISTS cells(geometry_id TEXT,cell_index INTEGER,start_m REAL,end_m REAL,length_m REAL,payload TEXT,PRIMARY KEY(geometry_id,cell_index));
 CREATE TABLE IF NOT EXISTS scores(geometry_id TEXT PRIMARY KEY,version TEXT,payload TEXT,provenance TEXT);
+CREATE TABLE IF NOT EXISTS score_retry_history(attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,geometry_id TEXT,successful INTEGER,payload TEXT);
 CREATE TABLE IF NOT EXISTS raster_assets(asset_id TEXT PRIMARY KEY,payload TEXT);
 CREATE TABLE IF NOT EXISTS road_links(link_id TEXT PRIMARY KEY,route_id TEXT,entity_id TEXT,source_route_id TEXT,inferred INTEGER,method TEXT,covered_m REAL,intervals TEXT,payload TEXT);
 CREATE INDEX IF NOT EXISTS road_link_route ON road_links(route_id);

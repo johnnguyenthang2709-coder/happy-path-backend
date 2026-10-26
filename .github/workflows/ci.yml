@@ -13,3 +13,13 @@ jobs:
       - run: uv lock --check
       - run: make test
       - run: make openapi && git diff --exit-code -- openapi.yaml
+  research:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install . -r requirements/research-phase412.txt
+      - name: Research pytest tests (report private-input skips)
+        run: python -m pytest tests/research -q -rs

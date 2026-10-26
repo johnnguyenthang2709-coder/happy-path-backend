@@ -54,6 +54,11 @@ def main():
         help="Allow official native raster windows for missing inputs; no new Goong calls",
     )
     parser.add_argument("--route-id")
+    parser.add_argument(
+        "--retry-missing",
+        action="store_true",
+        help="Retry missing native raster inputs on this derivative; completed cells and terminal exclusions stay unchanged",
+    )
     parser.add_argument("--entity-id")
     parser.add_argument("--case-id")
     parser.add_argument("--text", default="")
@@ -64,7 +69,13 @@ def main():
         result = {"status": "disabled", "records": []}
     elif args.operation == "build":
         result = build(
-            root, args.output, args.phase, args.raster, online=args.online, osm=args.osm
+            root,
+            args.output,
+            args.phase,
+            args.raster,
+            online=args.online,
+            osm=args.osm,
+            retry_missing=args.retry_missing,
         )
     else:
         result = IntegratedBaseline(args.output, enabled=True).query(

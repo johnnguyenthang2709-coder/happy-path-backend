@@ -1,0 +1,79 @@
+{
+  "reviewed_commit": "0c6887727fe0d5a962c9848ff76fae6773c2e11e",
+  "executed_this_fix_round": true,
+  "production_ci": {
+    "python": "3.10.21",
+    "uv": "0.12.21",
+    "tests_passed": 23,
+    "seconds": 8.481,
+    "frozen_dependencies": "passed",
+    "lock_check": "passed",
+    "optional_research_dependencies_absent": "passed",
+    "openapi_diff": "passed"
+  },
+  "clean_research_ci": {
+    "python": "3.12.15",
+    "passed": 54,
+    "skipped": 5,
+    "seconds": 0.57,
+    "pip_check": "passed",
+    "system_site_packages": false
+  },
+  "actual_private_input_research": {
+    "python": "3.12.10",
+    "passed": 59,
+    "skipped": 0,
+    "seconds": 16.23,
+    "mode": "read-only queries; retry fixture databases are temporary"
+  },
+  "broader_linux_final": {
+    "passed": 359,
+    "failed": 1,
+    "skipped": 4,
+    "subtests_passed": 417,
+    "seconds": 292.2,
+    "excluded": [
+      "tests/test_mapillary_visual_codex.py"
+    ],
+    "failure": {
+      "test": "tests/test_corridors_e2e.py::TestHappyPathFreezeSpecV3E2E::test_ticket_08_sub350ms_parallel_goong_clock_propagation_and_null_points",
+      "elapsed_seconds": 0.41340238799966755,
+      "required_less_than_seconds": 0.34,
+      "isolated_retry_performed": false
+    }
+  },
+  "earlier_broader_attempts": [
+    {
+      "collection_errors": 2,
+      "dependency_skips": 1,
+      "reason": "Missing optional osmium in initial broader environment; installed separately before full rerun"
+    },
+    {
+      "passed": 355,
+      "failed": 5,
+      "skipped": 4,
+      "subtests_passed": 424,
+      "seconds": 176.91,
+      "reason": "Manifest path-escape guards reject symlinked source paths in copied checkout; full rerun on original read-only repository mount"
+    }
+  ],
+  "validation_harness_correction": "Initial CRLF-converted temporary checkouts caused OpenAPI byte diffs. Exact Git LF blobs used for final complete job; committed OpenAPI and exporter unchanged.",
+  "baseline_comparison_queries": {
+    "ok": 22,
+    "stale": 0
+  },
+  "private_log_sha256": {
+    "review_final_linux.log": "f607a6dfa73119113d148c79d05d922de70ea7d643d6576fe991799723aadb4f",
+    "workspace_full_linux.log": "108d146a8f7a2182ff405007f5a64e104fa0bb2ac9e6ad8bacd685286f26a604",
+    "actual_final.log": "6bfec3f0421af3139c7b8a901bc89cd2ffd1f40daf9c2b33f8ae2bfb623e2b63",
+    "broader_linux.log": "1e42a4c2a02a0eb39b4348ff165063f0a75321ecc96f03fcaafe52a0d70d222a",
+    "final_audit.json": "9d6d020b6d4f89157ac414f1516fe5c68cadfe7d4227148d7cf2db7c82f1acce"
+  },
+  "publication_review": {
+    "credentials_or_private_artifacts_staged": false,
+    "unrelated_changes_preserved": true,
+    "production_job_configuration_unchanged": true,
+    "published_databases_unchanged": true
+  },
+  "hosted_ci": "Inspect after normal push; local results do not assert GitHub Actions success"
+}

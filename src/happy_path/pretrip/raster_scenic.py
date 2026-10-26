@@ -411,6 +411,30 @@ class RasterStore:
         if added:
             self._index()
 
+    def native_coverage(self, kind, coords):
+        """Known native pixel footprint, including NoData; never acquires data.
+
+        Covered NoData/conflicting values are uncertainty, not missing downloads.
+        This lets explicit retries avoid repeatedly fetching unavoidable gaps.
+        """
+        coords = np.asarray(coords, dtype=float)
+        covered = np.zeros(len(coords), dtype=bool)
+        finite = np.flatnonzero(np.isfinite(coords).all(axis=1))
+        if not len(finite):
+            return covered
+        pairs = self.trees[kind].query(points(coords[finite]))
+        for ai in np.unique(pairs[1]):
+            ix = finite[pairs[0, pairs[1] == ai]]
+            asset = self.by_kind[kind][int(ai)]
+            data, _, _ = self._array(asset)
+            inv = asset["inverse"]
+            col = np.floor(inv.a * coords[ix, 0] + inv.c).astype(int)
+            row = np.floor(inv.e * coords[ix, 1] + inv.f).astype(int)
+            covered[ix] |= (
+                (row >= 0) & (col >= 0) & (row < data.shape[0]) & (col < data.shape[1])
+            )
+        return covered
+
     def sample(self, kind, coords, *, acquire=True):
         coords = np.asarray(coords, dtype=float)
         n = len(coords)
@@ -470,8 +494,8 @@ class RasterStore:
             local()
         return values, centers, res, refs
 
-    def terrain(self, coords):
-        values, center, res, refs = self.sample("dem", coords)
+    def terrain(self, coords, *, acquire=True):
+        values, center, res, refs = self.sample("dem", coords, acquire=acquire)
         offsets = np.array([(dx, dy) for dy in [-1, 0, 1] for dx in [-1, 0, 1]])
         neighbors = (center[:, None, :] + res[:, None, :] * offsets).reshape(-1, 2)
         finite = np.isfinite(neighbors).all(axis=1)
@@ -479,7 +503,7 @@ class RasterStore:
         actual = np.full_like(neighbors, np.nan)
         nr = [None] * len(neighbors)
         if finite.any():
-            sub, xy, _, r = self.sample("dem", neighbors[finite])
+            sub, xy, _, r = self.sample("dem", neighbors[finite], acquire=acquire)
             v[finite] = sub
             actual[finite] = xy
             for i, ref in zip(np.where(finite)[0], r):

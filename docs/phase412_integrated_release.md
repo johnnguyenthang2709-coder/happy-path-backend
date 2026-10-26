@@ -64,6 +64,22 @@ python scripts/integrate_phase412.py build --enable-research \
 
 Add `--online` only when missing native raster windows should be acquired from the official public products. This builder performs no new Goong calls. Identical canonical geometry, CRS and extraction version reuse existing cell-level results. All other captured geometry is sampled through the native extractor; proximity to a parallel road never licenses copying its score. Builds commit score checkpoints and may resume. Changed inputs require a new output directory. Existing source releases are read-only.
 
+An existing score row can contain partial inputs even when its conditional score is non-null. To retry those gaps, use `--retry-missing` explicitly on a **working derivative**, keeping the same declared inputs, OSM snapshot, policy and extraction version:
+
+```sh
+# First create your working derivative using the private snapshots.
+python scripts/integrate_phase412.py build --enable-research \
+  --phase /private-handoff/phase --raster /private-handoff/raster \
+  --osm /private-handoff/base_roads.parquet --output /working-derivative
+# Resume after enabling permitted official raster access (or omit --online
+# if additional native blocks have already been added to the cache).
+python scripts/integrate_phase412.py build --enable-research --online --retry-missing \
+  --phase /private-handoff/phase --raster /private-handoff/raster \
+  --osm /private-handoff/base_roads.parquet --output /working-derivative
+```
+
+Do not use a published release as the writable output. Without `--retry-missing`, existing scores keep their previous resume behavior. Explicit retry selects only cells with missing native inputs or newly available cached evidence; fully observed cells, supported tunnel exclusions, degenerate tangents and covered native NoData/conflicting pixels are not repeatedly extracted. Covered NoData remains unknown, not zero landscape value. Successful partial retries preserve earlier known samples and recompute scores and comparisons using unchanged weights. Previous evidence and attempts remain in `score_retry_history`; failed retries preserve the prior consistent score/cell checkpoint. Changed geometry, extraction version or contradictory samples are rejected. A score change invalidates its cached comparisons in the same transaction, and a completed build regenerates comparisons; an interrupted build cannot serve those stale comparisons.
+
 All queries require `--enable-research`; omitting it returns `disabled` without touching files. The output directory defaults to `exports/route_intelligence/phase4_12_integrated`; pass `--output` for a portable location.
 
 ```sh
@@ -80,6 +96,8 @@ python scripts/integrate_phase412.py gaps --enable-research
 
 Nationwide catalog records remain searchable independently of baseline routes. Inferred/unresolved discoveries are explicit opt-ins. They do not become provider-routed access, verified entrances or operational stop eligibility. Inherited access and compatible detours apply only to their original route ID/snapshot and coordinate evidence; proximity-generated opportunities never inherit a detour from a different candidate.
 
+`--include-inferred` and `--include-unresolved` widen only geographic-status filters. Entity, route, claim/source, road-context and relationship invalidations remain mandatory, including when inspecting older databases. Connection-local views enforce these rules without migrating or writing the input snapshot. Cached comparisons whose current dependencies no longer qualify return `stale_comparison`, with no usable cached comparison, until a derivative is rebuilt. Inventory counts explicitly include retained history; `gaps` is labeled an unresolved/history queue and does not confer current eligibility. No flag exposes quarantined or superseded records as current usable data.
+
 ## Geographic scope and score explanations
 
 Route context uses bounded OSM components and preserves source-explicit capture links. Spatial overlap is a proximity relationship, not field-verified carriageway identity. General corridor claims, localized historical context and nearby place context remain distinct. Pending localized extents do not acquire invented route intervals. Historical La Ngà markers are not modern geocoding or whole-QL20 events. Hải Vân Quan monument claims remain nearby monument context, not pass-wide significance. The original Bảo Lộc audit route is excluded from default usable candidates.
@@ -94,12 +112,14 @@ Same-OD comparisons show provider distance and captured ETA, Scenic components/c
 
 The supported full suite is `python -m pytest tests -q` on a Linux disposable seeded database. The repository's original runtime tests are included. The public checkout intentionally omits historical, unrelated phase test modules that require unreleased acquisition trees. The final release test report distinguishes the full workspace suite (excluding the out-of-scope Mapillary module), the clean public checkout suite, and actual-input integration tests. Skips without private inputs are explicit, not passes.
 
+Production CI remains Python 3.10 with `uv==0.12.21`, `make setup`, frozen production dependencies, `uv lock --check`, `make test` (unittest discovery), and the OpenAPI diff check. Research pytest modules live in `tests/research/`, deliberately without `__init__.py`, so production unittest discovery does not import optional geospatial/pytest dependencies. A separate Python 3.12 CI job installs the base project plus `requirements/research-phase412.txt` and runs `python -m pytest tests/research -q -rs`; private-data and acquisition-manifest skips appear explicitly in its log. The production runtime isolation unittest remains in the production test tree.
+
 ```sh
 export HAPPY_PATH_DB_PATH=/tmp/happy-path-release-tests.db
 python scripts/seed_db.py --db-path "$HAPPY_PATH_DB_PATH" --if-missing
 python -m pytest tests -q
 export HAPPY_PATH_INTEGRATED_TEST_DATA=/path/to/integrated-release
-python -m pytest tests/test_integrated_release.py -q
+python -m pytest tests/research/test_integrated_release.py -q
 ```
 
 See `releases/phase4_12/` for the actual results, input inventory and compact release metadata. The local full dataset contains record-level corrections, unresolved claims, raw/canonical source IDs, original source payloads, score/cell provenance and comparison exports. It is a research baseline, not an import into production.
