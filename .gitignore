@@ -71,3 +71,6 @@ Desktop.ini
 .pi/
 .jev-fabric-native/
 .scratch/
+
+# Integrated research outputs include restricted provider/source snapshots.
+/exports/route_intelligence/phase4_12_integrated/

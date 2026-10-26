@@ -1,0 +1,38 @@
+{
+  "inputs": [
+    {
+      "name": "national_mapping.sqlite",
+      "bytes": 307712000,
+      "sha256": "5d1fa4d55d07a2b93c80146f2e23bbabc44f7475e0b643e5c4ec416d32a462bd"
+    },
+    {
+      "name": "config.json",
+      "bytes": 1222,
+      "sha256": "b74f0a53af77b6011f1c89c425ebc8c10e0fd17b8a3e27c70ad12137e4634d9e"
+    },
+    {
+      "name": "route_register.json",
+      "bytes": 2240403,
+      "sha256": "2af12614d05038590e804831ac1b27d09cc420aab687ed6f444109fe696fc7c3"
+    },
+    {
+      "name": "scenic.sqlite",
+      "bytes": 15469219840,
+      "sha256": "161688b629de2b40bd544e85c816ac040e5283380dd9a3f7764316df73fb4b8e"
+    }
+  ],
+  "required_external": [
+    "Phase 4.12 source/validity database",
+    "32-route raster capsule or original raster database",
+    "OSM road matching inventory",
+    "native raster cache for offline extraction, otherwise official public online windows"
+  ],
+  "osm_matching_inventory": {
+    "logical_name": "national_osm_matching_inventory",
+    "filename": "base_roads.parquet",
+    "sha256": "0df629f1eaec8b3622c508a325e31024c978c8de17dc67978042afb0baaca96b",
+    "bytes": 72329910,
+    "purpose": "Direction-aware OSM attribution and supported tunnel masks; not a visibility certificate"
+  },
+  "redistribution": "Input contents not included; provider/source permissions are not inferred from possession of a snapshot"
+}

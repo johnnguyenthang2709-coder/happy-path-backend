@@ -1,0 +1,74 @@
+{
+  "executed_this_release": true,
+  "full_workspace": {
+    "passed": 326,
+    "failed": 1,
+    "subtests_passed": 417,
+    "seconds": 731.82,
+    "excluded": [
+      "tests/test_mapillary_visual_codex.py"
+    ],
+    "failure": "test_ticket_08_sub350ms_parallel_goong_clock_propagation_and_null_points",
+    "elapsed_seconds": 0.3819942379999972,
+    "assertion_limit_seconds": 0.34
+  },
+  "clean_public_checkout_linux": {
+    "passed": 42,
+    "skipped": 5,
+    "subtests_passed": 323,
+    "seconds": 12.7
+  },
+  "actual_input_targeted": {
+    "passed": 24,
+    "seconds": 12.05
+  },
+  "offline_handoff_score_match": {
+    "original_geometries": 297,
+    "portable_geometries": 297,
+    "exact_numeric_match": true,
+    "differences": []
+  },
+  "query_smoke": [
+    {
+      "command": "inventory",
+      "status": "ok"
+    },
+    {
+      "command": "route",
+      "status": "ok"
+    },
+    {
+      "command": "compare",
+      "status": "ok"
+    },
+    {
+      "command": "evidence",
+      "status": "ok"
+    },
+    {
+      "command": "places",
+      "status": "ok"
+    },
+    {
+      "command": "coverage",
+      "status": "ok"
+    },
+    {
+      "command": "search",
+      "status": "ok"
+    },
+    {
+      "command": "gaps",
+      "status": "ok"
+    }
+  ],
+  "private_log_sha256": {
+    "full_workspace_linux": "c66c9c5a7bed3239ed18bf22d30e6310173bd3b780d6551d9a22afa480f5a9c6",
+    "clean_checkout_linux": "d2b40067ed5399d5877739f1de71ef2bdd988d17dfe566bce9ca0a945a7442b3",
+    "actual_input_targeted": "b16d7e4e27af26249a3a0c09cb6a720f1c388069db27f6f6e7951f503776251d",
+    "offline_handoff_build": "37e2627693c68056bb1e9dfdbabc938a9d0af625ca58346ee272f993bb8e8fdb",
+    "offline_legacy_repair": "51d22d345ddec19b67171d637790a98ce7e68a454d667b0447ceacbb4be23771",
+    "score_consistency": "c7e4fae79bd9b5fee0d483577d9c77870a11b8ce3a5a1b81f14642f56ff69d13",
+    "query_smoke": "74dac24ce12954e06f483d55fb4f796f5e22db97725dda14373299e0bfbb6ead"
+  }
+}

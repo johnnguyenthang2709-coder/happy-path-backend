@@ -1,0 +1,9 @@
+# Isolated opt-in research environment, tested on CPython 3.12.
+# Install the base project separately; this does not change production extras/lock.
+numpy==2.5.4
+pyarrow==26.0.0
+pyproj==3.8.0
+rasterio==1.5.2
+shapely==2.2.0
+psutil==7.2.2
+pytest==9.1.1

@@ -1,0 +1,9 @@
+{
+  "integrated_database_bytes": 1326718976,
+  "private_handoff_files": 9785,
+  "private_handoff_payload_bytes": 2731512263,
+  "private_handoff_manifest_sha256": "685233bc2bb7fe9442b5ddf939323a6d8b3ba8cf539d5f3d8e3b6e594885f76e",
+  "large_artifacts_in_git": false,
+  "obtain": "Authorized private transfer from dataset holder; no public historical-snapshot download is authorized",
+  "reproduce": "See docs/phase412_integrated_release.md; use package_phase412_inputs.py --include-rasters then integrate_phase412.py build --enable-research with explicit phase/raster/osm/output paths"
+}

@@ -1,0 +1,7 @@
+# Publication review
+
+Reviewed the staged release additions before publication. Only implementation, schema, tests, documentation and author-generated aggregate metadata are included. The staged additions contain no SQLite databases, raster caches, acquisition Parquet collections, images, provider geometry/response exports, private community payloads or configured credentials. No absolute workspace paths are required by the release. Restricted input contents remain outside Git; possession of source snapshots does not imply redistribution permission.
+
+The existing default application files are unchanged by this release. Unrelated working changes in `README.md`, `pyproject.toml` and `uv.lock` were preserved and excluded. The original Phase 4.12 database, nationwide raster database, register and configuration were rehashed and match their recorded input hashes. The new module requires explicit research opt-in. Dataset limitations are retained in the query layer and release guide.
+
+The commit does not include the full nationwide acquisition builder or all historical phase builders. It includes the dependency closure for the integrated builder and queries. Historical source inputs must be obtained by authorized private transfer; native raster windows can be acquired using the included extractor. Public-source starting points and reproduction commands are documented, without promising byte-identical recreation from new provider responses.

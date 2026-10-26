@@ -1,0 +1,54 @@
+{
+  "version": "phase4.12-integrated-v1",
+  "status": "ready_research_baseline",
+  "counts": {
+    "cells": 258835,
+    "claim_links": 1747,
+    "claims": 2823,
+    "comparisons": 22,
+    "effective_claim_links": 1335,
+    "effective_claims": 928,
+    "effective_entities": 1385,
+    "effective_place_links": 1569,
+    "effective_relationships": 771,
+    "effective_routes": 381,
+    "entities": 2647,
+    "invalidations": 601,
+    "place_links": 1681,
+    "road_links": 1734,
+    "routes": 394,
+    "scores": 297,
+    "sources": 2053,
+    "unresolved": 1666
+  },
+  "coverage": {
+    "public_entities_default": 1385,
+    "inferred_entities": 100,
+    "unresolved_entities": 1161,
+    "catalog_roads": 164,
+    "raster_scored_geometries": 297,
+    "exact_reused_geometries": 32,
+    "new_native_geometries": 265,
+    "supported_provider_approaches": 450,
+    "compatible_detours": 219,
+    "default_route_claim_bindings": 1335,
+    "duplicate_claims_grouped": 0,
+    "default_discovery_relationships": 1569
+  },
+  "validation_errors": [],
+  "bundled_data": "Author-generated aggregate metadata only; full provider/source snapshots require an authorized private handoff",
+  "runtime_default": "unchanged; explicit --enable-research required",
+  "policy": {
+    "tree": 0.35,
+    "water": 0.25,
+    "cropland": 0.1,
+    "ruggedness": 0.3,
+    "rms_saturation_m": 10,
+    "minimum_evidence_weight_coverage": 0.8
+  },
+  "limitations": [
+    "2021 nearby-landscape proxy, not road-visible scenery or safety",
+    "Catalog research is incomplete; no forced Scenic/Iconic/Express winner",
+    "Inherited holds, ambiguity, inferred positions and source age retained"
+  ]
+}
